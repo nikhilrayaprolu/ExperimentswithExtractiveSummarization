@@ -21,8 +21,8 @@ parser.add_argument('-embed_num',type=int,default=100)
 parser.add_argument('-pos_dim',type=int,default=50)
 parser.add_argument('-pos_num',type=int,default=100)
 parser.add_argument('-seg_num',type=int,default=10)
-parser.add_argument('-model',type=str,default='RNN')
-parser.add_argument('-hidden_size',type=int,default=200)
+parser.add_argument('-model',type=str,default='BasicRNN')
+parser.add_argument('-hidden_size',type=int,default=100)
 # train
 parser.add_argument('-lr',type=float,default=1e-3)
 parser.add_argument('-batch_size',type=int,default=32)
@@ -53,8 +53,8 @@ torch.cuda.set_device(args.device)
 torch.cuda.manual_seed(args.seed)
 torch.manual_seed(args.seed)
 random.seed(args.seed)
-numpy.random.seed(args.seed) 
-    
+numpy.random.seed(args.seed)
+
 def eval(net,vocab,data_iter,criterion):
     net.eval()
     total_loss = 0
@@ -72,11 +72,12 @@ def eval(net,vocab,data_iter,criterion):
 
 def train():
     logging.info('Loading vocab,train and val dataset.Wait a second,please')
-    
+
     vocab = torch.load(args.vocab)
     embed = vocab.embed
     # update args
     args.embed_num = embed.size(0)
+    #print(args.embed_num)
     args.embed_dim = embed.size(1)
     # build model
     net = getattr(models,args.model)(args,embed).cuda()
@@ -88,42 +89,55 @@ def train():
             batch_size=args.batch_size,
             shuffle=False)
     # loss function
+    #print(len(train_iter))
     criterion = nn.BCELoss()
     # model info
     print(net)
     params = sum(p.numel() for p in list(net.parameters())) / 1e6
     print('#Params: %.1fM' % (params))
-    
+
     min_loss = float('inf')
-    optimizer = torch.optim.Adam(net.parameters(),lr=args.lr)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, net.parameters()),lr=args.lr)
     net.train()
-    
-    t1 = time() 
+
+    t1 = time()
     for epoch in range(1,args.epochs+1):
+        print(epoch)
         for i,batch in enumerate(train_iter):
+            print(i)
+            #print(i)
+            #print(batch)
             features,targets,_,doc_lens = vocab.make_features(batch)
+            #print(features.shape, targets.shape)
             features,targets = Variable(features).cuda(),Variable(targets.float()).cuda()
+            #print(i)
             probs = net(features,doc_lens)
+            #print("came here")
             loss = criterion(probs,targets)
             optimizer.zero_grad()
+            #print("before loas backward")
             loss.backward()
+            #print("after loss backward")
             clip_grad_norm(net.parameters(), args.max_norm)
+            #print("before optimiser")
             optimizer.step()
+            #print("after optimiser")
             if args.debug:
-                print('Batch ID:%d Loss:%f' %(i,loss.data[0]))
+                if i%100 == 0:
+                    print('Batch ID:%d Loss:%f' %(i,loss.data[0]))
                 continue
             if i % args.report_every == 0:
                 cur_loss = eval(net,vocab,val_iter,criterion)
                 if cur_loss < min_loss:
                     min_loss = cur_loss
-                    best_path = net.save(args) 
+                    best_path = net.save(args)
                 logging.info('Epoch: %2d Min_Val_Loss: %f Cur_Val_Loss: %f'
                         % (epoch,min_loss,cur_loss))
     t2 = time()
     logging.info('Total Cost:%f h'%((t2-t1)/3600))
 
 def test():
-     
+
     vocab = torch.load(args.vocab)
     test_dataset = torch.load(args.test_dir)
     test_iter = DataLoader(dataset=test_dataset,
@@ -134,7 +148,7 @@ def test():
     net.load_state_dict(checkpoint['model'])
     net.cuda()
     net.eval()
-    
+
     doc_num = len(test_dataset)
     time_cost = 0
     file_id = 1
